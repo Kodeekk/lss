@@ -35,6 +35,9 @@ Examples of `-sf`:
 -    `--ignore=".local/, foo.txt bar"`
 -    `--ignore=".local, .local/share/, ../abc.rcf"`
 
+**To build the project just clone this repo and run `make`**
+
+
 for the first run, its recommended to use sudo to create */etc/lss/* and */etc/lss/global_cache.bin*
 at this point i can say that this is 100% best utility i ever created
 dude it does even have spinner animation
