@@ -1,0 +1,4 @@
+# Compiled binaries
+/target/
+
+/Cargo.lock

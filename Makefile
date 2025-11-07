@@ -23,4 +23,4 @@ all:
 	sudo chmod 777 /bin/lss
 	sudo mkdir -p /etc/lss
 	sudo chown $(USER):$(USER) /etc/lss
-	cp target/debug/lss ./ida_works/
+	# 	cp target/debug/lss ./ida_works/
