@@ -9,7 +9,20 @@ use data_structures::{
     Cache, CacheEntry, ColumnWidths, FileInfo, Logger, SizeFormat, SizeUnit, Spinner,
 };
 
+// Cross-platform cache directory
+#[cfg(unix)]
 const CACHE_DIR: &str = "/etc/lss";
+
+#[cfg(windows)]
+fn get_cache_dir() -> PathBuf {
+    // Use AppData\Local on Windows
+    if let Ok(appdata) = env::var("LOCALAPPDATA") {
+        PathBuf::from(appdata).join("lss")
+    } else {
+        PathBuf::from("C:\\ProgramData\\lss")
+    }
+}
+
 const CACHE_FILE: &str = "global_cache.bin";
 
 fn parse_size_format(format_str: &str) -> Result<SizeFormat, String> {
@@ -30,15 +43,25 @@ fn parse_ignore_patterns(ignore_str: &str) -> Vec<String> {
 }
 
 fn ensure_cache_dir() -> io::Result<()> {
-    let cache_dir = Path::new(CACHE_DIR);
+    let cache_dir = get_cache_dir_path();
     if !cache_dir.exists() {
         fs::create_dir_all(cache_dir)?;
     }
     Ok(())
 }
 
+#[cfg(unix)]
+fn get_cache_dir_path() -> PathBuf {
+    Path::new(CACHE_DIR).to_path_buf()
+}
+
+#[cfg(windows)]
+fn get_cache_dir_path() -> PathBuf {
+    get_cache_dir()
+}
+
 fn get_cache_path() -> PathBuf {
-    Path::new(CACHE_DIR).join(CACHE_FILE)
+    get_cache_dir_path().join(CACHE_FILE)
 }
 
 fn save_cache(cache: &Cache, logger: &Logger) -> io::Result<()> {
@@ -191,7 +214,6 @@ fn load_cache(logger: &Logger) -> io::Result<Cache> {
     Ok(cache)
 }
 
-//#[unsafe(export_name = "MAINTODBG")]
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
 
