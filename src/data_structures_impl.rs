@@ -12,17 +12,37 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::SystemTime;
 
+// Platform-specific imports
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+
 impl FileMetadata {
     fn from_metadata(metadata: &fs::Metadata) -> Self {
-        Self {
-            mode: metadata.mode(),
-            nlink: metadata.nlink(),
-            uid: metadata.uid(),
-            gid: metadata.gid(),
+        #[cfg(unix)]
+        {
+            Self {
+                mode: metadata.mode(),
+                nlink: metadata.nlink(),
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+            }
+        }
+        
+        #[cfg(windows)]
+        {
+            // Windows doesn't have these exact concepts, so we use defaults
+            Self {
+                mode: 0o644, // Default read/write permissions
+                nlink: 1,
+                uid: 0,
+                gid: 0,
+            }
         }
     }
 }
@@ -87,6 +107,7 @@ impl Logger {
             println!("{}", message);
         }
     }
+    
     #[allow(dead_code)]
     fn update_loading(&self, spinner: &mut Spinner, message: &str) {
         if !self.verbose {
@@ -104,7 +125,6 @@ impl Logger {
         if !self.verbose {
             print!("\r{} {} ({}/{}) ", spinner.next(), message, current, total);
         } else if current % 10 == 0 || current == total {
-            // Only print every 10 items in verbose mode to avoid spam
             println!("{} ({}/{})", message, current, total);
         }
     }
@@ -112,12 +132,9 @@ impl Logger {
 
 impl FileInfo {
     pub fn new(path: &Path, name: String, ignore_symlinks: bool) -> io::Result<Self> {
-        //already kinda forgetting how that works
         let metadata = if ignore_symlinks {
-            // Use symlink_metadata to get info about the symlink itself without following it
             fs::symlink_metadata(path)?
         } else {
-            // Use metadata to follow symlinks and get info about the target
             fs::metadata(path)?
         };
 
@@ -133,8 +150,10 @@ impl FileInfo {
             "other".to_string()
         };
 
+        let inode = Self::get_inode_from_metadata(&metadata);
+
         Ok(FileInfo {
-            inode: metadata.ino(),
+            inode,
             size: metadata.len(),
             name,
             file_type,
@@ -142,6 +161,19 @@ impl FileInfo {
             is_directory,
             full_path: path.to_path_buf(),
         })
+    }
+
+    #[cfg(unix)]
+    fn get_inode_from_metadata(metadata: &fs::Metadata) -> u64 {
+        metadata.ino()
+    }
+
+    #[cfg(windows)]
+    fn get_inode_from_metadata(metadata: &fs::Metadata) -> u64 {
+        // On Windows, use file index as a substitute for inode
+        // This is a unique identifier for files on NTFS
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_index().unwrap_or(0)
     }
 
     pub fn calculate_directory_size(
@@ -233,11 +265,14 @@ impl FileInfo {
             match metadata_result {
                 Ok(metadata) => {
                     if metadata.is_dir() {
-                        if metadata.ino() == self.inode && metadata.dev() == self.get_device_id() {
+                        let entry_inode = Self::get_inode_from_metadata(&metadata);
+                        let entry_device = Self::get_device_id_from_metadata(&metadata);
+                        
+                        if entry_inode == self.inode && entry_device == self.get_device_id() {
                             continue;
                         }
 
-                        let subdir_key = (metadata.ino(), metadata.dev());
+                        let subdir_key = (entry_inode, entry_device);
                         if visited_inodes.contains(&subdir_key) {
                             continue;
                         }
@@ -327,14 +362,14 @@ impl FileInfo {
 
         Ok(total_size)
     }
+    
     #[allow(dead_code)]
     fn times_equal(&self, _other: &SystemTime) -> bool {
-        //unused. maybe ill get this back working again
         true
     }
+    
     #[allow(dead_code)]
     fn system_time_to_secs(&self, _time: &SystemTime) -> u64 {
-        //this one is also unused
         1
     }
 
@@ -345,8 +380,8 @@ impl FileInfo {
                 continue;
             }
 
-            if pattern.ends_with('/') {
-                let dir_pattern = pattern.trim_end_matches('/');
+            if pattern.ends_with('/') || pattern.ends_with('\\') {
+                let dir_pattern = pattern.trim_end_matches('/').trim_end_matches('\\');
                 if path.is_dir() {
                     if let Some(file_name) = path.file_name() {
                         if file_name.to_string_lossy() == dir_pattern {
@@ -370,6 +405,7 @@ impl FileInfo {
         format!("{:x}", hasher.finalize())
     }
 
+    #[cfg(unix)]
     fn get_device_id(&self) -> u64 {
         if let Ok(metadata) = fs::metadata(&self.full_path) {
             metadata.dev()
@@ -378,31 +414,73 @@ impl FileInfo {
         }
     }
 
-    fn format_permissions(&self) -> String {
-        let mode = self.metadata.mode;
-        let mut permissions = String::with_capacity(10);
-
-        permissions.push(if self.is_directory {
-            'd'
-        } else if self.file_type == "symlink" {
-            'l'
-        } else if self.file_type == "file" {
-            '-'
+    #[cfg(windows)]
+    fn get_device_id(&self) -> u64 {
+        if let Ok(metadata) = fs::metadata(&self.full_path) {
+            metadata.volume_serial_number().unwrap_or(0) as u64
         } else {
-            '?'
-        });
+            0
+        }
+    }
 
-        permissions.push(if mode & 0o400 != 0 { 'r' } else { '-' });
-        permissions.push(if mode & 0o200 != 0 { 'w' } else { '-' });
-        permissions.push(if mode & 0o100 != 0 { 'x' } else { '-' });
-        permissions.push(if mode & 0o040 != 0 { 'r' } else { '-' });
-        permissions.push(if mode & 0o020 != 0 { 'w' } else { '-' });
-        permissions.push(if mode & 0o010 != 0 { 'x' } else { '-' });
-        permissions.push(if mode & 0o004 != 0 { 'r' } else { '-' });
-        permissions.push(if mode & 0o002 != 0 { 'w' } else { '-' });
-        permissions.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+    #[cfg(unix)]
+    fn get_device_id_from_metadata(metadata: &fs::Metadata) -> u64 {
+        metadata.dev()
+    }
 
-        permissions
+    #[cfg(windows)]
+    fn get_device_id_from_metadata(metadata: &fs::Metadata) -> u64 {
+        metadata.volume_serial_number().unwrap_or(0) as u64
+    }
+
+    fn format_permissions(&self) -> String {
+        #[cfg(unix)]
+        {
+            let mode = self.metadata.mode;
+            let mut permissions = String::with_capacity(10);
+
+            permissions.push(if self.is_directory {
+                'd'
+            } else if self.file_type == "symlink" {
+                'l'
+            } else if self.file_type == "file" {
+                '-'
+            } else {
+                '?'
+            });
+
+            permissions.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+            permissions.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+            permissions.push(if mode & 0o100 != 0 { 'x' } else { '-' });
+            permissions.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+            permissions.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+            permissions.push(if mode & 0o010 != 0 { 'x' } else { '-' });
+            permissions.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+            permissions.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+            permissions.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+
+            permissions
+        }
+
+        #[cfg(windows)]
+        {
+            // Windows simplified permissions display
+            let mut permissions = String::with_capacity(10);
+            
+            permissions.push(if self.is_directory {
+                'd'
+            } else if self.file_type == "symlink" {
+                'l'
+            } else if self.file_type == "file" {
+                '-'
+            } else {
+                '?'
+            });
+
+            // Windows files are generally readable
+            permissions.push_str("rw-rw-rw-");
+            permissions
+        }
     }
 
     fn format_time(&self) -> String {
