@@ -23,14 +23,14 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::fs::MetadataExt;
 
 impl FileMetadata {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
+    fn from_metadata(_metadata: &fs::Metadata) -> Self {
         #[cfg(unix)]
         {
             Self {
-                mode: metadata.mode(),
-                nlink: metadata.nlink(),
-                uid: metadata.uid(),
-                gid: metadata.gid(),
+                mode: _metadata.mode(),
+                nlink: _metadata.nlink(),
+                uid: _metadata.uid(),
+                gid: _metadata.gid(),
             }
         }
         
@@ -170,10 +170,17 @@ impl FileInfo {
 
     #[cfg(windows)]
     fn get_inode_from_metadata(metadata: &fs::Metadata) -> u64 {
-        // On Windows, use file index as a substitute for inode
-        // This is a unique identifier for files on NTFS
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_index().unwrap_or(0)
+        // On Windows, we'll use creation time + file size as a pseudo-inode
+        // This isn't perfect but works for most cases on stable Rust
+        use std::time::UNIX_EPOCH;
+        
+        let created = metadata.created().unwrap_or(UNIX_EPOCH);
+        let created_secs = created.duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        // Combine creation time and size for a reasonably unique identifier
+        created_secs.wrapping_mul(31).wrapping_add(metadata.len())
     }
 
     pub fn calculate_directory_size(
@@ -416,8 +423,17 @@ impl FileInfo {
 
     #[cfg(windows)]
     fn get_device_id(&self) -> u64 {
-        if let Ok(metadata) = fs::metadata(&self.full_path) {
-            metadata.volume_serial_number().unwrap_or(0) as u64
+        // Use a hash of the drive/volume path as device ID
+        use sha2::{Digest, Sha256};
+        
+        if let Some(prefix) = self.full_path.components().next() {
+            let mut hasher = Sha256::new();
+            hasher.update(format!("{:?}", prefix).as_bytes());
+            let result = hasher.finalize();
+            u64::from_le_bytes([
+                result[0], result[1], result[2], result[3],
+                result[4], result[5], result[6], result[7],
+            ])
         } else {
             0
         }
@@ -429,8 +445,10 @@ impl FileInfo {
     }
 
     #[cfg(windows)]
-    fn get_device_id_from_metadata(metadata: &fs::Metadata) -> u64 {
-        metadata.volume_serial_number().unwrap_or(0) as u64
+    fn get_device_id_from_metadata(_metadata: &fs::Metadata) -> u64 {
+        // For metadata without path context, return a constant
+        // This is less than ideal but works with stable Rust
+        1
     }
 
     fn format_permissions(&self) -> String {
