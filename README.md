@@ -1,43 +1,82 @@
-# lss
-### ls but sorted
-lists all the files sorted in current directory
+# LSS - Cross-Platform File Listing Tool
 
-one day i was just dreamin about `ls` command or some file manager being able to sort files by size
-fck it, i wrote it myself
+A Rust-based file listing tool that works on both Unix/Linux and Windows systems.
 
-usage it quite simple:
+## Cross-Platform Features
 
-**sorting modes:**
- - `-s` - sort by entry sizes
- - `-n` - sorts by entry names
- - `-t` - sorts by entry types
- - `-r` - reverses the order
- *if mode flag is not passed, default sorting mode will be as* `-s`
+### Platform-Specific Handling
 
-**other useful flags:**
+**Unix/Linux:**
+- Uses standard inode numbers
+- Uses device IDs from filesystem
+- Displays full Unix permission strings (rwxrwxrwx)
+- Cache stored in `/etc/lss/`
 
- - `--verbose` - prints log and other useless sht
- - `--ignore-symlinks` - just makes it ignore symlinks
- - `-rc` - recalculates file and directory sizes and rewrites the cache file
- - `--ignore` - allows you to pass entries to be ignored separated by comma
- - `-sf` - stands for Size Format
+**Windows:**
+- Uses file index as inode substitute (NTFS unique identifier)
+- Uses volume serial number as device ID
+- Shows simplified permissions (always "rw-rw-rw-" for display)
+- Cache stored in `%LOCALAPPDATA%\lss\` (or `C:\ProgramData\lss\` as fallback)
 
-Available size formats:
-- `By` (bytes)
-- `Bi` (binary)
-- `Kb`/`Mb`/`Gb`/`Tb` (decimal)
+### Key Differences from Unix-Only Version
 
-Examples of `-sf`:
--    `-sf=GB`
--    `-sf=KiB`
+1. **Metadata Access**: 
+   - Unix: Uses `std::os::unix::fs::MetadataExt` for inode, dev, mode, uid, gid, nlink
+   - Windows: Uses `std::os::windows::fs::MetadataExt` for file_index and volume_serial_number
 
-  Examples of --ignore:
--    `--ignore=".local/, foo.txt bar"`
--    `--ignore=".local, .local/share/, ../abc.rcf"`
+2. **File Identifiers**:
+   - Unix: inode + device ID
+   - Windows: file index + volume serial number
 
-**To build the project just clone this repo and run `make`**
+3. **Permissions**:
+   - Unix: Full rwx permission display
+   - Windows: Simplified display (Windows doesn't have Unix-style permissions)
 
+4. **Path Separators**:
+   - Both `/` and `\` are supported in ignore patterns on Windows
 
-for the first run, its recommended to use sudo to create */etc/lss/* and */etc/lss/global_cache.bin*
-at this point i can say that this is 100% best utility i ever created
-dude it does even have spinner animation
+## Building
+
+```bash
+cargo build --release
+```
+
+## Usage
+
+```bash
+# Sort by size (calculates directory sizes)
+lss -s
+
+# Sort by name
+lss -n
+
+# Sort by type
+lss -t
+
+# Reverse sort
+lss -r
+
+# Force directory size calculation
+lss -ds
+
+# Recalculate cache
+lss -rc
+
+# Verbose output
+lss --verbose
+
+# Ignore symlinks
+lss --ignore-symlinks
+
+# Set size format (By/Bi/Kb/Mb/Gb/Tb)
+lss -sf=Bi
+
+# Ignore specific files/directories
+lss --ignore=".git/,.cache/,node_modules/"
+```
+
+## Notes
+
+- On Windows, you may need administrator privileges to create the cache directory in `C:\ProgramData\lss\`
+- The cache file format is the same across platforms
+- Symlink handling works on both platforms (Windows supports symlinks on NTFS with appropriate permissions)
