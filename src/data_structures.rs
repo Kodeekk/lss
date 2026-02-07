@@ -14,8 +14,6 @@ pub struct FileInfo {
     pub inode: u64,
     pub size: u64,
     pub name: String,
-    // created: SystemTime, //i dont give a shit that half of functionality is commented, i dont want to fuck with this time-things anymore
-    // modified: SystemTime,
     pub file_type: String,
     pub metadata: FileMetadata,
     pub is_directory: bool,
